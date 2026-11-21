@@ -38,8 +38,30 @@ export function isMusicTrackId(value: unknown): value is MusicTrackId {
   return GENERATED_TRACKS.some(([id]) => id === value);
 }
 
+/*
+ * Real recorded tracks that live in `public/music/`. They are added to the
+ * library as ready-made choices. Keep the credit lines visible in the app.
+ */
+export type LibraryTrackId = "little-fish" | "baby-girl" | "creepy-clown";
+
+export const LIBRARY_TRACKS: ReadonlyArray<{
+  id: LibraryTrackId;
+  label: string;
+  file: string;
+  credit: string;
+}> = [
+  { id: "little-fish", label: "Little Fish (Quincas Moreira)", file: "little-fish.mp3", credit: "Little Fish by Quincas Moreira" },
+  { id: "baby-girl", label: "Brand New Baby Girl (Jeremy Korpas)", file: "brand-new-baby-girl.mp3", credit: "Brand New Baby Girl by Jeremy Korpas" },
+  { id: "creepy-clown", label: "The Creepy Clown (Jeremy Korpas, spooky mood)", file: "the-creepy-clown.mp3", credit: "The Creepy Clown by Jeremy Korpas" },
+];
+
+export function isLibraryTrackId(value: unknown): value is LibraryTrackId {
+  return LIBRARY_TRACKS.some((track) => track.id === value);
+}
+
 export type MusicSource =
   | { kind: "generated"; id: MusicTrackId }
+  | { kind: "library"; id: LibraryTrackId }
   | { kind: "file"; file: File };
 
 export type MusicPlayback = { stop: () => void };
@@ -439,6 +461,7 @@ function levelOut(buffer: AudioBuffer): AudioBuffer {
 }
 
 const generatedCache = new Map<MusicTrackId, Promise<AudioBuffer>>();
+const libraryCache = new Map<LibraryTrackId, Promise<AudioBuffer>>();
 
 export async function loadMusicBuffer(source: MusicSource): Promise<AudioBuffer> {
   if (typeof OfflineAudioContext === "undefined") {
@@ -452,6 +475,29 @@ export async function loadMusicBuffer(source: MusicSource): Promise<AudioBuffer>
       cached = renderGenerated(source.id);
       generatedCache.set(source.id, cached);
       cached.catch(() => generatedCache.delete(source.id));
+    }
+
+    return cached;
+  }
+
+  if (source.kind === "library") {
+    const track = LIBRARY_TRACKS.find((item) => item.id === source.id);
+    if (!track) throw new Error("This track is not in the library.");
+
+    let cached = libraryCache.get(source.id);
+
+    if (!cached) {
+      const env = (import.meta as unknown as { env?: { BASE_URL?: string } }).env;
+      const url = `${env?.BASE_URL ?? "/"}music/${track.file}`;
+
+      cached = fetch(url)
+        .then((response) => {
+          if (!response.ok) throw new Error(`The track file is missing (${response.status}). Keep public/music/${track.file} in the project.`);
+          return response.arrayBuffer();
+        })
+        .then((data) => new OfflineAudioContext(2, 1, SAMPLE_RATE).decodeAudioData(data));
+      libraryCache.set(source.id, cached);
+      cached.catch(() => libraryCache.delete(source.id));
     }
 
     return cached;

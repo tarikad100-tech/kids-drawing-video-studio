@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
+  isLibraryTrackId,
   loadMusicBuffer,
+  type LibraryTrackId,
   type MusicSource,
   type MusicTrackId,
 } from "../audio/music";
 
-export type MusicChoice = "none" | "file" | MusicTrackId;
+export type MusicChoice = "none" | "file" | MusicTrackId | LibraryTrackId;
 
 export type MusicState = {
   buffer: AudioBuffer | null;
@@ -16,6 +18,8 @@ export type MusicState = {
 function sourceFor(track: MusicChoice, file: File | null): MusicSource | null {
   if (track === "none") return null;
   if (track === "file") return file ? { kind: "file", file } : null;
+
+  if (isLibraryTrackId(track)) return { kind: "library", id: track };
 
   return { kind: "generated", id: track };
 }

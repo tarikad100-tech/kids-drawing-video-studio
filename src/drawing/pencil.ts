@@ -1,3 +1,5 @@
+import { HAND_SPRITES, getHandImage } from "./handSprites";
+
 export type ToolStyle = "pencil" | "pen" | "crayon";
 export type HandStyle = "none" | "light" | "tan" | "brown" | "dark" | "glove";
 
@@ -83,145 +85,330 @@ type Skin = { fill: string; edge: string; sleeve: string };
 
 type Pt = readonly [number, number];
 
-/** A rounded limb or finger: darker edge underneath, skin color on top. */
-function limb(
-  ctx: CanvasRenderingContext2D,
-  skin: Skin,
-  size: number,
-  from: Pt,
-  control: Pt,
-  to: Pt,
-  thickness: number,
-) {
-  const outline = Math.max(1.5, size * 0.011);
+const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => [
+  (1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0],
+  (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1],
+];
 
-  for (const [color, extra] of [
-    [skin.edge, outline * 2],
-    [skin.fill, 0],
-  ] as const) {
-    ctx.beginPath();
-    ctx.moveTo(from[0] * size, from[1] * size);
-    ctx.quadraticCurveTo(control[0] * size, control[1] * size, to[0] * size, to[1] * size);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = thickness * size + extra;
-    ctx.strokeStyle = color;
-    ctx.stroke();
-  }
+function lineWidthFor(size: number): number {
+  return Math.max(1.5, size * 0.009);
 }
 
-function blob(
+/**
+ * A tapered, rounded finger (or the forearm) along a curve, wider at `a`
+ * (radius r0) than at `b` (radius r1). Coordinates are fractions of `size`.
+ * Returns the unit direction at the tip so details (a nail) can follow it.
+ */
+function tube(
   ctx: CanvasRenderingContext2D,
   skin: Skin,
   size: number,
-  center: Pt,
-  rx: number,
-  ry: number,
-  rotation: number,
-) {
+  a: Pt,
+  c: Pt,
+  b: Pt,
+  r0: number,
+  r1: number,
+): number {
+  const steps = 16;
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  let tipAngle = 0;
+  let startAngle = 0;
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const [px, py] = quad(a, c, b, t);
+    const dx = 2 * (1 - t) * (c[0] - a[0]) + 2 * t * (b[0] - c[0]);
+    const dy = 2 * (1 - t) * (c[1] - a[1]) + 2 * t * (b[1] - c[1]);
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    const r = r0 + (r1 - r0) * t;
+
+    left.push([(px + nx * r) * size, (py + ny * r) * size]);
+    right.push([(px - nx * r) * size, (py - ny * r) * size]);
+
+    if (i === 0) startAngle = Math.atan2(ny, nx);
+    if (i === steps) tipAngle = Math.atan2(ny, nx);
+  }
+
   ctx.beginPath();
-  ctx.ellipse(center[0] * size, center[1] * size, rx * size, ry * size, rotation, 0, Math.PI * 2);
+  ctx.moveTo(left[0][0], left[0][1]);
+  for (let i = 1; i <= steps; i++) ctx.lineTo(left[i][0], left[i][1]);
+  ctx.arc(b[0] * size, b[1] * size, r1 * size, tipAngle, tipAngle - Math.PI, true);
+  for (let i = steps; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+  ctx.arc(a[0] * size, a[1] * size, r0 * size, startAngle + Math.PI, startAngle, true);
+  ctx.closePath();
   ctx.fillStyle = skin.fill;
   ctx.fill();
-  ctx.lineWidth = Math.max(1.5, size * 0.011);
+  ctx.lineWidth = lineWidthFor(size);
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = skin.edge;
+  ctx.stroke();
+
+  // Soft highlight along the top edge and a faint shadow along the bottom edge.
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let i = 2; i <= steps - 3; i++) {
+    const t = i / steps;
+    const [px, py] = quad(a, c, b, t);
+    const dx = 2 * (1 - t) * (c[0] - a[0]) + 2 * t * (b[0] - c[0]);
+    const dy = 2 * (1 - t) * (c[1] - a[1]) + 2 * t * (b[1] - c[1]);
+    const length = Math.hypot(dx, dy) || 1;
+    const r = (r0 + (r1 - r0) * t) * 0.5;
+    const x = (px + (dy / length) * r) * size;
+    const y = (py - (dx / length) * r) * size;
+    if (i === 2) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+  ctx.lineWidth = Math.max(1, (r0 + r1) * size * 0.28);
+  ctx.stroke();
+  ctx.restore();
+
+  return Math.atan2(b[1] - c[1], b[0] - c[0]);
+}
+
+function nail(ctx: CanvasRenderingContext2D, size: number, tip: Pt, angle: number, radius: number, glove: boolean) {
+  if (glove) return;
+
+  ctx.save();
+  ctx.translate((tip[0] - Math.cos(angle) * radius * 0.7) * size, (tip[1] - Math.sin(angle) * radius * 0.7) * size);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, radius * 0.62 * size, radius * 0.5 * size, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255, 244, 238, 0.8)";
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, size * 0.004);
+  ctx.strokeStyle = "rgba(160, 100, 80, 0.45)";
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A smooth closed shape through the given points. */
+function softShape(ctx: CanvasRenderingContext2D, skin: Skin, size: number, points: readonly Pt[]) {
+  const n = points.length;
+  const mid = (i: number): Pt => {
+    const p = points[i % n];
+    const q = points[(i + 1) % n];
+
+    return [((p[0] + q[0]) / 2) * size, ((p[1] + q[1]) / 2) * size];
+  };
+
+  ctx.beginPath();
+  const start = mid(n - 1);
+  ctx.moveTo(start[0], start[1]);
+
+  for (let i = 0; i < n; i++) {
+    const m = mid(i);
+    ctx.quadraticCurveTo(points[i][0] * size, points[i][1] * size, m[0], m[1]);
+  }
+
+  ctx.closePath();
+  ctx.fillStyle = skin.fill;
+  ctx.fill();
+  ctx.lineWidth = lineWidthFor(size);
+  ctx.lineJoin = "round";
   ctx.strokeStyle = skin.edge;
   ctx.stroke();
 }
 
 /*
- * A simple cartoon fist, in the pencil's own frame (tip at (0, 0), the pencil
- * pointing along +x). Four rounded fingers wrap around the pencil, the thumb
- * rests next to the tip side, and the forearm and sleeve hang down (+y is down
- * and to the right on screen). Simple shapes keep it clean instead of distorted.
+ * A relaxed writing grip, in the pencil's own frame (tip at (0, 0), the pencil
+ * along +x). The pencil is pinched between the thumb and the index finger and
+ * rests on the middle finger; the other two fingers curl under. The back of
+ * the hand sits behind the pencil and the forearm leaves toward the lower
+ * right, with a sleeve.
  */
 
-function roundedBar(
-  ctx: CanvasRenderingContext2D,
-  skin: Skin,
-  size: number,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-) {
-  ctx.beginPath();
-  ctx.roundRect(x * size, y * size, w * size, h * size, (w * size) / 2);
-  ctx.fillStyle = skin.fill;
-  ctx.fill();
-  ctx.lineWidth = Math.max(1.5, size * 0.009);
-  ctx.strokeStyle = skin.edge;
-  ctx.stroke();
-}
-
-/** Behind the pencil: sleeve, forearm and the palm. */
+/** Behind the pencil: sleeve, forearm, back of the hand and the hidden fingers. */
 function drawHandBack(ctx: CanvasRenderingContext2D, skin: Skin, size: number) {
-  // Sleeve with a lighter cuff band at its top.
+  const wrist: Pt = [0.5, 0.24];
+  const elbow: Pt = [0.62, 0.86];
+  const angle = Math.atan2(elbow[1] - wrist[1], elbow[0] - wrist[0]);
+
+  // Forearm and sleeve.
+  tube(ctx, skin, size, wrist, [0.56, 0.52], elbow, 0.066, 0.078);
+
   ctx.save();
-  ctx.translate(size * 0.33, size * 0.5);
+  ctx.translate(wrist[0] * size, wrist[1] * size);
+  ctx.rotate(angle - Math.PI / 2);
   ctx.beginPath();
-  ctx.roundRect(-size * 0.14, 0, size * 0.28, size * 0.55, size * 0.05);
+  ctx.roundRect(-size * 0.115, size * 0.2, size * 0.23, size * 0.6, size * 0.035);
   ctx.fillStyle = skin.sleeve;
   ctx.fill();
-  ctx.lineWidth = Math.max(1.5, size * 0.008);
+  ctx.lineWidth = lineWidthFor(size);
   ctx.strokeStyle = "rgba(0, 0, 0, 0.22)";
   ctx.stroke();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
-  ctx.fillRect(-size * 0.14, 0, size * 0.28, size * 0.05);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+  ctx.fillRect(-size * 0.115, size * 0.2, size * 0.23, size * 0.045);
   ctx.restore();
 
-  // Wrist, then the palm under the fingers.
-  limb(ctx, skin, size, [0.33, 0.28], [0.33, 0.4], [0.33, 0.55], 0.12);
-  blob(ctx, skin, size, [0.32, 0.2], 0.115, 0.1, 0);
+  // Back of the hand.
+  softShape(ctx, skin, size, [
+    [0.3, 0.02],
+    [0.42, -0.02],
+    [0.53, 0.04],
+    [0.55, 0.17],
+    [0.5, 0.27],
+    [0.4, 0.28],
+    [0.31, 0.15],
+  ]);
+
+  // Curled ring and little fingers: two rounded knuckles below the hand.
+  for (const [x, y, rx, ry, rot] of [
+    [0.37, 0.265, 0.05, 0.034, 0.5],
+    [0.44, 0.3, 0.048, 0.032, 0.7],
+  ] as const) {
+    ctx.beginPath();
+    ctx.ellipse(x * size, y * size, rx * size, ry * size, rot, 0, Math.PI * 2);
+    ctx.fillStyle = skin.fill;
+    ctx.fill();
+    ctx.lineWidth = lineWidthFor(size);
+    ctx.strokeStyle = skin.edge;
+    ctx.stroke();
+  }
+
+  // Middle finger: it supports the pencil from below.
+  tube(ctx, skin, size, [0.4, 0.15], [0.35, 0.11], [0.28, 0.05], 0.038, 0.03);
 }
 
-/** In front of the pencil: four fingers wrapped around it, and the thumb. */
-function drawHandFront(
-  ctx: CanvasRenderingContext2D,
-  skin: Skin,
-  size: number,
-  glove: boolean,
-) {
-  const left = 0.21;
-  const step = 0.048;
+/** In front of the pencil: the index finger and the thumb pinching it. */
+function drawHandFront(ctx: CanvasRenderingContext2D, skin: Skin, size: number, glove: boolean) {
+  // Index finger: arches over the pencil from the knuckle.
+  const indexTip: Pt = [0.27, -0.012];
+  const indexAngle = tube(ctx, skin, size, [0.5, 0.05], [0.38, -0.06], indexTip, 0.044, 0.031);
+  nail(ctx, size, indexTip, indexAngle, 0.03, glove);
 
-  for (let i = 0; i < 4; i++) {
-    roundedBar(ctx, skin, size, left + i * step, -0.07, 0.056, 0.2);
-  }
+  // Thumb: from the base of the hand to the pencil, from the other side.
+  const thumbTip: Pt = [0.22, 0.04];
+  const thumbAngle = tube(ctx, skin, size, [0.45, 0.25], [0.31, 0.2], thumbTip, 0.05, 0.034);
+  nail(ctx, size, thumbTip, thumbAngle, 0.032, glove);
 
-  // Thumb resting on the tip side of the fist.
-  ctx.save();
-  ctx.translate(size * 0.19, -size * 0.045);
-  ctx.rotate(-0.45);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, size * 0.075, size * 0.036, 0, 0, Math.PI * 2);
-  ctx.fillStyle = skin.fill;
-  ctx.fill();
-  ctx.lineWidth = Math.max(1.5, size * 0.009);
+  // Small crease at the knuckles of the back of the hand.
   ctx.strokeStyle = skin.edge;
+  ctx.globalAlpha *= 0.55;
+  ctx.lineWidth = Math.max(1, size * 0.004);
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(size * 0.44, size * 0.075);
+  ctx.quadraticCurveTo(size * 0.46, size * 0.1, size * 0.45, size * 0.13);
   ctx.stroke();
-
-  if (!glove) {
-    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-    ctx.beginPath();
-    ctx.ellipse(-size * 0.04, -size * 0.004, size * 0.016, size * 0.01, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.restore();
+  ctx.globalAlpha /= 0.55;
 
   if (glove) {
-    // Glove stitches on the back of the hand.
     ctx.strokeStyle = "rgba(120, 130, 145, 0.7)";
     ctx.lineWidth = Math.max(1, size * 0.005);
-    ctx.lineCap = "round";
 
-    for (const x of [0.27, 0.32, 0.37]) {
+    for (const [x0, y0, x1, y1] of [
+      [0.4, 0.06, 0.38, 0.12],
+      [0.44, 0.1, 0.43, 0.17],
+      [0.37, 0.1, 0.35, 0.16],
+    ] as const) {
       ctx.beginPath();
-      ctx.moveTo(x * size, 0.15 * size);
-      ctx.lineTo(x * size, 0.26 * size);
+      ctx.moveTo(x0 * size, y0 * size);
+      ctx.lineTo(x1 * size, y1 * size);
       ctx.stroke();
     }
   }
+}
+
+/** Shade a "rgb(r,g,b)" string by a factor. */
+function shade(rgb: string, f: number): string {
+  const n = rgb.match(/\d+/g)?.map(Number) ?? [0, 0, 0];
+  return `rgb(${n.map((v) => Math.round(v * f)).join(",")})`;
+}
+
+/** Realistic sprite hand. Returns false when the image is not loaded yet. */
+function drawHandSprite(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  travelAngle: number,
+  size: number,
+  lift: number,
+  alpha: number,
+  hand: Exclude<HandStyle, "none">,
+): boolean {
+  const img = getHandImage(hand);
+  if (!img) return false;
+  const sp = HAND_SPRITES[hand];
+  const s = size / sp.length;
+  const axis = -Math.PI * 0.34 + 0.22 * Math.cos(travelAngle);
+
+  // Contact shadow.
+  ctx.save();
+  ctx.globalAlpha = alpha * (0.2 - 0.08 * lift);
+  ctx.fillStyle = "#000000";
+  ctx.beginPath();
+  ctx.ellipse(
+    x + size * 0.02 + lift * size * 0.03,
+    y + size * 0.012 + lift * size * 0.05,
+    size * 0.05 * (1 + lift * 0.4),
+    size * 0.013 * (1 + lift * 0.4),
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y - lift * size * 0.04);
+  ctx.rotate(axis - sp.axis);
+  ctx.scale(s, s);
+  ctx.translate(-sp.tip[0], -sp.tip[1]);
+
+  // Forearm and sleeve continuing from the sprite's cut edge.
+  const x0 = sp.cutX - 12;
+  const top = sp.armTop;
+  const bot = sp.armBottom;
+  const mid = (top + bot) / 2;
+  const half = (bot - top) / 2;
+  const line = shade(sp.skin, 0.42);
+  const reach = 1400;
+  const sleeveAt = x0 + 330;
+
+  const armPath = (xa: number, xb: number, ha: number, hb: number) => {
+    ctx.beginPath();
+    ctx.moveTo(xa, mid - ha);
+    ctx.lineTo(xb, mid - hb);
+    ctx.lineTo(xb, mid + hb);
+    ctx.lineTo(xa, mid + ha);
+    ctx.closePath();
+  };
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = line;
+  ctx.fillStyle = sp.skin;
+  armPath(x0, sleeveAt, half, half * 1.06);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x0, mid - half);
+  ctx.lineTo(sleeveAt, mid - half * 1.06);
+  ctx.moveTo(x0, mid + half);
+  ctx.lineTo(sleeveAt, mid + half * 1.06);
+  ctx.stroke();
+
+  const sleeve = ctx.createLinearGradient(0, mid - half * 1.5, 0, mid + half * 1.5);
+  sleeve.addColorStop(0, shade(sp.sleeve, 1.04));
+  sleeve.addColorStop(1, shade(sp.sleeve, 0.86));
+  ctx.fillStyle = sleeve;
+  ctx.strokeStyle = shade(sp.sleeve, 0.45);
+  ctx.beginPath();
+  ctx.moveTo(sleeveAt - 8, mid - half * 1.12);
+  ctx.quadraticCurveTo(sleeveAt + 14, mid, sleeveAt - 8, mid + half * 1.12);
+  ctx.lineTo(sleeveAt + reach, mid + half * 1.9);
+  ctx.lineTo(sleeveAt + reach, mid - half * 1.9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+  return true;
 }
 
 /**
@@ -244,6 +431,8 @@ export function drawTool(
   hand: HandStyle,
 ) {
   if (alpha <= 0) return;
+
+  if (hand !== "none" && drawHandSprite(ctx, x, y, travelAngle, size, lift, alpha, hand)) return;
 
   const palette = TOOLS[tool];
   const axis = -Math.PI * 0.34 + 0.22 * Math.cos(travelAngle);

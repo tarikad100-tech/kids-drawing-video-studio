@@ -3,6 +3,8 @@ import type { ChangeEvent, DragEvent } from "react";
 import { exportDrawingVideo, type ExportQuality } from "./video/exportVideo";
 import { LessonPreview } from "./components/LessonPreview";
 import { ProcessingPanel } from "./components/ProcessingPanel";
+import { PartsPanel } from "./components/PartsPanel";
+import { DEFAULT_LAYOUT, parseLayout, type LayoutPlan } from "./drawing/layout";
 import { useImageUrl, useLoadedImage } from "./hooks/useLoadedImage";
 import { DEFAULT_PROFILE_PICTURE } from "./branding/defaultProfile";
 import { MAX_CAPTION_LENGTH } from "./drawing/captions";
@@ -15,7 +17,9 @@ import {
 import { useMusicBuffer, type MusicChoice } from "./hooks/useMusicBuffer";
 import {
   GENERATED_TRACKS,
+  LIBRARY_TRACKS,
   MAX_AUDIO_FILE_BYTES,
+  isLibraryTrackId,
 } from "./audio/music";
 import {
   BACKGROUND_OPTIONS,
@@ -70,6 +74,7 @@ type ProjectSettings = {
   music: { track: MusicChoice; volume: number };
   processing: ProcessingSettings;
   animation: AnimationSettings;
+  layout: LayoutPlan;
 };
 
 type Analysis =
@@ -100,6 +105,7 @@ const MUSIC_CHOICES: readonly MusicChoice[] = [
   "none",
   "file",
   ...GENERATED_TRACKS.map(([id]) => id),
+  ...LIBRARY_TRACKS.map((track) => track.id),
 ];
 
 const initialAnimation: AnimationSettings = {
@@ -131,6 +137,7 @@ const initialSettings: ProjectSettings = {
   music: { track: "bouncy", volume: 0.5 },
   processing: defaultProcessingSettings,
   animation: initialAnimation,
+  layout: DEFAULT_LAYOUT,
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -162,6 +169,7 @@ function readSavedProject(): ProjectSettings {
     const track = MUSIC_CHOICES.find((choice) => choice === music.track);
 
     return {
+      layout: parseLayout(parsed.layout),
       ratio: parsed.ratio === "16:9" ? "16:9" : "9:16",
       narration: parsed.narration === true,
       language:
@@ -407,6 +415,7 @@ function App() {
   const music = useMusicBuffer(settings.music.track, musicFile);
   const processingSettings = settings.processing;
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+  const layoutRef = useRef<LayoutPlan>(settings.layout);
 
   // Analysis for the current file only; the last result stays visible while a new one is computed.
   const analysisForFile = analysis && analysis.file === file ? analysis : null;
@@ -480,7 +489,7 @@ function App() {
             result: processed,
           });
           setSteps((current) =>
-            buildSteps(processed.drawing, current.length, current),
+            buildSteps(processed.drawing, current.length, current, layoutRef.current),
           );
           setHidden([]);
           setHistory([]);
@@ -628,8 +637,18 @@ function App() {
     setSelectedStep((current) => Math.min(current, next.steps.length - 1));
   }
 
+  function changeLayout(next: LayoutPlan) {
+    layoutRef.current = next;
+    setSettings((current) => ({ ...current, layout: next }));
+
+    if (drawing) {
+      commit({ steps: buildSteps(drawing, steps.length, steps, next), hidden });
+      setSelectedStep(0);
+    }
+  }
+
   function resetSteps() {
-    commit({ steps: buildSteps(drawing, steps.length), hidden });
+    commit({ steps: buildSteps(drawing, steps.length, steps, settings.layout), hidden });
     setSelectedStep(0);
   }
 
@@ -1335,6 +1354,13 @@ function App() {
                   {label}
                 </option>
               ))}
+              <optgroup label="Library: recorded tracks">
+                {LIBRARY_TRACKS.map((track) => (
+                  <option key={track.id} value={track.id}>
+                    {track.label}
+                  </option>
+                ))}
+              </optgroup>
               <option value="file" disabled={musicFile === null}>
                 {musicFile ? `Imported: ${musicFile.name}` : "Imported file (none yet)"}
               </option>
@@ -1389,6 +1415,13 @@ function App() {
             {music.status === "error" || musicError ? (
               <p className="error" role="alert">
                 {musicError || music.message}
+              </p>
+            ) : null}
+            {isLibraryTrackId(settings.music.track) ? (
+              <p className="editor-help">
+                Credit in your video description:{" "}
+                {LIBRARY_TRACKS.find((track) => track.id === settings.music.track)?.credit}. Check the license terms
+                of the track before you publish.
               </p>
             ) : null}
             <p className="editor-help">
@@ -1474,6 +1507,8 @@ function App() {
         onToggleStroke={toggleStroke}
         onShowAll={() => commit({ steps, hidden: [] })}
       />
+
+      <PartsPanel drawing={drawing} layout={settings.layout} onChange={changeLayout} />
 
       <section className="panel editor-panel">
         <div className="editor-heading">

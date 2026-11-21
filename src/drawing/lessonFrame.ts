@@ -266,7 +266,12 @@ export function createLessonRenderer(input: RendererInput): LessonRenderer {
   const hasFinal = finalFit !== null || useAutoColors;
 
   // Construction lines: drawn first, erased after the last real stroke.
-  const guidePaths = buildGuides(drawing, hiddenStrokeIds);
+  // They follow the first stage only (for example the mother), not the whole picture.
+  const firstStage = steps.find((step) => step.strokeIds.length > 0);
+  const firstIds = firstStage ? new Set(firstStage.strokeIds) : null;
+  const firstStrokes = drawing && firstIds ? drawing.strokes.filter((stroke) => firstIds.has(stroke.id)) : [];
+  const guideSource = drawing && firstStrokes.length > 0 ? { ...drawing, strokes: firstStrokes } : drawing;
+  const guidePaths = buildGuides(guideSource, hiddenStrokeIds);
   const guideLengths = guidePaths.map((points) => {
     const cumulative = [0];
 

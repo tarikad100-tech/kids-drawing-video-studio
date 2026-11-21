@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { startMusic } from "../audio/music";
+import { onHandSpritesLoaded } from "../drawing/handSprites";
 import type { BackgroundPreset } from "../drawing/background";
 import {
   createLessonRenderer,
@@ -150,6 +151,9 @@ export function LessonPreview({
   const stepIndex = renderer ? renderer.stepAt(shown) : 0;
   const activeStep = steps[stepIndex];
 
+  const [spritesTick, setSpritesTick] = useState(0);
+  useEffect(() => onHandSpritesLoaded(() => setSpritesTick((n) => n + 1)), []);
+
   useEffect(() => {
     elapsedRef.current = elapsed;
   }, [elapsed]);
@@ -159,7 +163,7 @@ export function LessonPreview({
     if (!renderer || !ctx) return;
 
     renderer.drawFrame(ctx, shown);
-  }, [renderer, shown]);
+  }, [renderer, shown, spritesTick]);
 
   useEffect(() => {
     if (!playing) return;

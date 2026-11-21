@@ -1,3 +1,4 @@
+import { handSpritesReady } from "../drawing/handSprites";
 import { startMusic, type MusicPlayback } from "../audio/music";
 import { exportOffline } from "./offlineExport";
 import type { BackgroundPreset } from "../drawing/background";
@@ -103,6 +104,8 @@ export async function exportDrawingVideo({
   if (exportInProgress) {
     throw new Error("An export is already running. Please wait for it to finish.");
   }
+
+  await handSpritesReady();
 
   if (drawing.strokes.length === 0) {
     throw new Error(

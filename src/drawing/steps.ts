@@ -1,3 +1,4 @@
+import { allocateStages, orderByParts, type LayoutPlan } from "./layout";
 import type { DrawingData, DrawingStep, DrawingStroke, Point } from "./types";
 
 export const MIN_STEPS = 5;
@@ -167,11 +168,65 @@ function distributeStrokes(drawing: DrawingData, count: number): number[][] {
   return groups;
 }
 
+/** Stages that follow the layout plan: each part gets its own stages, in order. */
+function buildPlannedSteps(drawing: DrawingData, count: number, plan: LayoutPlan): DrawingStep[] {
+  const parts = orderByParts(drawing, plan);
+  const wanted = Math.min(MAX_STEPS, Math.max(MIN_STEPS, count, parts.length));
+  const lengths = parts.map((p) => p.strokes.reduce((sum, s) => sum + s.length, 0));
+  const stages = allocateStages(lengths, wanted);
+  const steps: DrawingStep[] = [];
+
+  parts.forEach(({ part, strokes }, partIndex) => {
+    const n = Math.min(stages[partIndex], strokes.length);
+    const total = lengths[partIndex];
+    let accumulated = 0;
+    let group: number[] = [];
+    let made = 0;
+
+    const flush = () => {
+      made += 1;
+      const suffix = n > 1 ? ` (${made}/${n})` : "";
+      const description =
+        part.kind === "text"
+          ? `Write the letters one by one, ${plan.direction === "rtl" ? "from right to left" : "from left to right"}.`
+          : `Draw this part from its big outline to its small details.`;
+
+      steps.push({
+        id: steps.length + 1,
+        title: `${part.name}${suffix}`,
+        description,
+        strokeIds: group,
+        weight: 1,
+      });
+      group = [];
+    };
+
+    for (const stroke of strokes) {
+      group.push(stroke.id);
+      accumulated += stroke.length;
+
+      if (made < n - 1 && accumulated >= ((made + 1) / n) * total) flush();
+    }
+
+    if (group.length > 0) flush();
+  });
+
+  // Pad with empty stages if the picture has fewer parts than the minimum.
+  while (steps.length < Math.min(MIN_STEPS, wanted)) {
+    steps.push({ id: steps.length + 1, title: `Stage ${steps.length + 1}`, description: "", strokeIds: [], weight: 1 });
+  }
+
+  return steps;
+}
+
 export function buildSteps(
   drawing: DrawingData | null,
   count: number,
   texts: readonly StepText[] = [],
+  plan: LayoutPlan | null = null,
 ): DrawingStep[] {
+  if (drawing && plan) return buildPlannedSteps(drawing, count, plan);
+
   const total = Math.min(MAX_STEPS, Math.max(MIN_STEPS, count));
   const groups = drawing
     ? distributeStrokes(drawing, total)

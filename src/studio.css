@@ -305,3 +305,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Drawing-order (parts) panel */
+.parts-panel .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }
+.parts-panel .row > div { display: flex; flex-direction: column; gap: 4px; }
+.parts-panel select, .parts-panel input { font: inherit; padding: 8px 10px; border: 1px solid #d9cfb8; border-radius: 10px; }
+.parts-panel canvas { display: block; margin: 8px 0; background: #fffdf7; }
