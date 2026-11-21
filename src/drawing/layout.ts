@@ -478,7 +478,7 @@ export function orderByParts(drawing: DrawingData, input: LayoutPlan): OrderedPa
     const strokes = bucket.get(part.id) ?? [];
     if (strokes.length === 0) continue;
 
-    const ordered =
+       const ordered: DrawingStroke[] =
       part.kind === "text"
         ? orderText(strokes, drawing, plan.direction)
         : part.kind === "rest"
@@ -486,10 +486,12 @@ export function orderByParts(drawing: DrawingData, input: LayoutPlan): OrderedPa
           : outlineFirst(strokes, pen);
 
     result.push({ part, strokes: ordered });
-    const last = ordered[ordered.length - 1];
-    pen = last.points[last.points.length - 1];
-  }
 
+    const lastStroke: DrawingStroke | undefined = ordered[ordered.length - 1];
+    if (lastStroke) {
+      pen = lastStroke.points[lastStroke.points.length - 1];
+    }
+  }
   return result;
 }
 
